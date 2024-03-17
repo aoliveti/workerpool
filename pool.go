@@ -48,8 +48,6 @@ func (p *Pool) Run(ctx context.Context, jobs <-chan Job) error {
 func (p *Pool) worker(groupCtx context.Context, jobs <-chan Job) error {
 	for job := range jobs {
 		if err := p.runJob(groupCtx, job); err != nil {
-			p.jobsWithErrors.Add(1)
-
 			if p.disableErrorPropagation {
 				continue
 			}
@@ -68,6 +66,10 @@ func (p *Pool) runJob(ctx context.Context, job Job) (err error) {
 		if r := recover(); r != nil {
 			p.jobsRecovered.Add(1)
 			err = r.(error)
+		}
+
+		if err != nil {
+			p.jobsWithErrors.Add(1)
 		}
 	}()
 
