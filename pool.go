@@ -6,11 +6,12 @@ import (
 	"sync/atomic"
 )
 
+type Job func(ctx context.Context) error
+
 type Pool struct {
 	workers                 int
 	disableErrorPropagation bool
 
-	jobsCount      atomic.Int64
 	jobsDone       atomic.Int64
 	jobsWithErrors atomic.Int64
 	jobsRecovered  atomic.Int64
@@ -32,14 +33,12 @@ func New(workers int, opts ...Option) *Pool {
 	return p
 }
 
-func (p *Pool) Run(ctx context.Context, group Group) error {
+func (p *Pool) Run(ctx context.Context, jobs <-chan Job) error {
 	g, groupCtx := errgroup.WithContext(ctx)
 
-	p.jobsCount.Store(int64(len(group)))
-	fetchedJobs := group.toStream(groupCtx)
 	for i := 0; i < p.workers; i++ {
 		g.Go(func() error {
-			return p.worker(groupCtx, fetchedJobs)
+			return p.worker(groupCtx, jobs)
 		})
 	}
 

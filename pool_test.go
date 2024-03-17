@@ -9,6 +9,8 @@ import (
 )
 
 func TestNew(t *testing.T) {
+	t.Parallel()
+
 	t.Run("negative workers", func(t *testing.T) {
 		workers := -1
 
@@ -30,11 +32,17 @@ func TestNew(t *testing.T) {
 }
 
 func TestPool_Run(t *testing.T) {
-	workers := 2
+	const workers int = 2
+
+	t.Parallel()
+
 	t.Run("run empty", func(t *testing.T) {
 		p := New(workers)
 
-		err := p.Run(context.TODO(), Group{})
+		jobs := make(chan Job)
+		close(jobs)
+
+		err := p.Run(context.TODO(), jobs)
 		assert.NoError(t, err)
 
 		assert.Zero(t, p.jobsDone.Load())
@@ -42,62 +50,76 @@ func TestPool_Run(t *testing.T) {
 	t.Run("run one job", func(t *testing.T) {
 		p := New(workers)
 
-		g := Group{}
-		g.Append(func(ctx context.Context) error {
-			_ = ctx
-			return nil
-		})
+		jobs := make(chan Job)
+		go func() {
+			defer close(jobs)
+			jobs <- func(ctx context.Context) error {
+				_ = ctx
+				return nil
+			}
+		}()
 
-		err := p.Run(context.TODO(), g)
+		err := p.Run(context.TODO(), jobs)
 		assert.NoError(t, err)
 		assert.Equal(t, 1, int(p.jobsDone.Load()))
 	})
 	t.Run("run nil job", func(t *testing.T) {
 		p := New(workers)
 
-		g := Group{}
-		g.Append(nil)
+		jobs := make(chan Job)
+		go func() {
+			defer close(jobs)
+			jobs <- nil
+		}()
 
-		err := p.Run(context.TODO(), g)
+		err := p.Run(context.TODO(), jobs)
 		assert.NoError(t, err)
 		assert.Equal(t, 1, int(p.jobsDone.Load()))
 	})
 	t.Run("run one hundred jobs", func(t *testing.T) {
 		p := New(workers)
 
-		g := Group{}
-		for i := 0; i < 100; i++ {
-			g.Append(func(ctx context.Context) error {
-				_ = ctx
-				return nil
-			})
-		}
+		jobs := make(chan Job)
+		go func() {
+			defer close(jobs)
 
-		err := p.Run(context.TODO(), g)
+			for i := 0; i < 100; i++ {
+				jobs <- func(ctx context.Context) error {
+					_ = ctx
+					return nil
+				}
+			}
+		}()
+
+		err := p.Run(context.TODO(), jobs)
 		assert.NoError(t, err)
 	})
 	t.Run("propagate error", func(t *testing.T) {
 		p := New(workers)
 		expectedErr := errors.New("error")
 
-		g := Group{}
-		for i := 0; i < 100; i++ {
-			v := i
-			g.Append(func(ctx context.Context) error {
-				if v == 4 {
-					return expectedErr
-				}
+		jobs := make(chan Job)
+		go func() {
+			defer close(jobs)
 
-				select {
-				case <-time.After(250 * time.Millisecond):
-				case <-ctx.Done():
-					return ctx.Err()
-				}
-				return nil
-			})
-		}
+			for i := 0; i < 100; i++ {
+				v := i
+				jobs <- func(ctx context.Context) error {
+					if v == 4 {
+						return expectedErr
+					}
 
-		err := p.Run(context.TODO(), g)
+					select {
+					case <-time.After(250 * time.Millisecond):
+					case <-ctx.Done():
+						return ctx.Err()
+					}
+					return nil
+				}
+			}
+		}()
+
+		err := p.Run(context.TODO(), jobs)
 		assert.Error(t, err, expectedErr)
 		got := int(p.jobsWithErrors.Load())
 		assert.NotZero(t, got)
@@ -106,24 +128,28 @@ func TestPool_Run(t *testing.T) {
 		p := New(workers)
 		expectedErr := errors.New("error")
 
-		g := Group{}
-		for i := 0; i < 100; i++ {
-			v := i
-			g.Append(func(ctx context.Context) error {
-				if v == 4 {
-					panic(expectedErr)
-				}
+		jobs := make(chan Job)
+		go func() {
+			defer close(jobs)
 
-				select {
-				case <-time.After(250 * time.Millisecond):
-				case <-ctx.Done():
-					return ctx.Err()
-				}
-				return nil
-			})
-		}
+			for i := 0; i < 100; i++ {
+				v := i
+				jobs <- func(ctx context.Context) error {
+					if v == 4 {
+						panic(expectedErr)
+					}
 
-		err := p.Run(context.TODO(), g)
+					select {
+					case <-time.After(250 * time.Millisecond):
+					case <-ctx.Done():
+						return ctx.Err()
+					}
+					return nil
+				}
+			}
+		}()
+
+		err := p.Run(context.TODO(), jobs)
 		assert.Error(t, err, expectedErr)
 		got := int(p.jobsWithErrors.Load())
 		assert.NotZero(t, got)
@@ -132,19 +158,23 @@ func TestPool_Run(t *testing.T) {
 		p := New(workers, WithErrorPropagationDisabled())
 		expectedErr := errors.New("error")
 
-		g := Group{}
-		for i := 0; i < 100; i++ {
-			v := i
-			g.Append(func(ctx context.Context) error {
-				if v == 4 {
-					return expectedErr
+		jobs := make(chan Job)
+		go func() {
+			defer close(jobs)
+
+			for i := 0; i < 100; i++ {
+				v := i
+				jobs <- func(ctx context.Context) error {
+					if v == 4 {
+						return expectedErr
+					}
+
+					return nil
 				}
+			}
+		}()
 
-				return nil
-			})
-		}
-
-		err := p.Run(context.TODO(), g)
+		err := p.Run(context.TODO(), jobs)
 		assert.NoError(t, err)
 		got := int(p.jobsWithErrors.Load())
 		assert.Equal(t, 1, got)
@@ -152,27 +182,33 @@ func TestPool_Run(t *testing.T) {
 	t.Run("cancel before end", func(t *testing.T) {
 		p := New(workers)
 
-		g := Group{}
-		for i := 0; i < 100; i++ {
-			g.Append(func(ctx context.Context) error {
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case <-time.After(500 * time.Millisecond):
-					return nil
+		jobs := make(chan Job)
+		go func() {
+			defer close(jobs)
+
+			for i := 0; i < 100; i++ {
+				jobs <- func(ctx context.Context) error {
+					select {
+					case <-ctx.Done():
+						return ctx.Err()
+					case <-time.After(500 * time.Millisecond):
+						return nil
+					}
 				}
-			})
-		}
+			}
+		}()
 
 		ctx, cancel := context.WithTimeout(context.TODO(), 50*time.Millisecond)
 		defer cancel()
 
-		err := p.Run(ctx, g)
+		err := p.Run(ctx, jobs)
 		assert.ErrorIs(t, err, context.DeadlineExceeded)
 	})
 }
 
 func TestPool_worker(t *testing.T) {
+	t.Parallel()
+
 	t.Run("no jobs", func(t *testing.T) {
 		p := Pool{}
 
@@ -185,12 +221,16 @@ func TestPool_worker(t *testing.T) {
 	t.Run("jobs without error", func(t *testing.T) {
 		p := Pool{}
 
-		g := Group{}
-		for i := 0; i < 10; i++ {
-			g.Append(nil)
-		}
+		jobs := make(chan Job)
+		go func() {
+			defer close(jobs)
 
-		err := p.worker(context.TODO(), g.toStream(context.TODO()))
+			for i := 0; i < 10; i++ {
+				jobs <- nil
+			}
+		}()
+
+		err := p.worker(context.TODO(), jobs)
 		assert.NoError(t, err)
 		assert.Zero(t, p.jobsWithErrors.Load())
 	})
@@ -198,24 +238,30 @@ func TestPool_worker(t *testing.T) {
 		expectedErr := errors.New("error")
 		p := Pool{}
 
-		g := Group{}
-		for i := 0; i < 10; i++ {
-			if i == 2 {
-				g.Append(func(ctx context.Context) error {
-					_ = ctx
-					return expectedErr
-				})
-			}
-			g.Append(nil)
-		}
+		jobs := make(chan Job)
+		go func() {
+			defer close(jobs)
 
-		err := p.worker(context.TODO(), g.toStream(context.TODO()))
+			for i := 0; i < 10; i++ {
+				if i == 2 {
+					jobs <- func(ctx context.Context) error {
+						_ = ctx
+						return expectedErr
+					}
+				}
+				jobs <- nil
+			}
+		}()
+
+		err := p.worker(context.TODO(), jobs)
 		assert.ErrorIs(t, err, expectedErr)
 		assert.NotZero(t, p.jobsWithErrors.Load())
 	})
 }
 
 func TestPool_runJob(t *testing.T) {
+	t.Parallel()
+
 	t.Run("run nil job", func(t *testing.T) {
 		var job Job
 		pool := Pool{}
