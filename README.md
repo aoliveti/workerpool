@@ -1,6 +1,14 @@
 # workerpool
 
+![GitHub go.mod Go version](https://img.shields.io/github/go-mod/go-version/aoliveti/workerpool)
+![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/aoliveti/workerpool/go.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/aoliveti/workerpool)](https://pkg.go.dev/github.com/aoliveti/workerpool)
+[![codecov](https://codecov.io/gh/aoliveti/workerpool/graph/badge.svg?token=INH9YdUc8x)](https://codecov.io/gh/aoliveti/workerpool)
+[![Go Report Card](https://goreportcard.com/badge/github.com/aoliveti/workerpool)](https://goreportcard.com/report/github.com/aoliveti/workerpool)
+![GitHub License](https://img.shields.io/github/license/aoliveti/workerpool)
+
 This package offers a simple and minimalist solution for managing concurrent job execution via a worker pool. It implements a concurrency-limiting goroutine pool, effectively constraining the concurrency of job execution.
+
 ## Installation
 
 ```bash
