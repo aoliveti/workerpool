@@ -3,9 +3,10 @@ package workerpool
 import (
 	"context"
 	"errors"
-	"github.com/stretchr/testify/assert"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestNew(t *testing.T) {
@@ -151,8 +152,10 @@ func TestPool_Run(t *testing.T) {
 
 		err := p.Run(context.TODO(), jobs)
 		assert.Error(t, err, expectedErr)
-		got := int(p.jobsWithErrors.Load())
-		assert.NotZero(t, got)
+		je := int(p.jobsWithErrors.Load())
+		assert.NotZero(t, je)
+		jr := int(p.jobsRecovered.Load())
+		assert.Equal(t, 1, jr)
 	})
 	t.Run("do not propagate error", func(t *testing.T) {
 		p := New(workers, WithErrorPropagationDisabled())
